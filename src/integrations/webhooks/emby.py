@@ -38,6 +38,7 @@ class EmbyWebhookProcessor(BaseWebhookProcessor):
             logger.warning("Ignoring Emby webhook call because no ID was found.")
             return
 
+        self._snapshot_deletion_generation(user)
         self._process_media(payload, user, ids)
 
     def _is_supported_event(self, event_type):

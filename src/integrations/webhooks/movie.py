@@ -3,6 +3,7 @@ import logging
 from django.utils import timezone
 
 import app
+from app import barriers
 from app.models import MediaTypes, Sources, Status
 
 from . import anime_mappings
@@ -63,7 +64,44 @@ class MovieWebhookMixin:
 
     def _handle_movie(self, media_id, payload, user):
         """Handle movie playback event."""
+        identity = barriers.make_identity(
+            Sources.TMDB.value,
+            media_id,
+            MediaTypes.MOVIE.value,
+        )
+
         if self._is_unplayed(payload):
+            with self._write_gate(user, [identity], "movie") as allowed:
+                if not allowed:
+                    return
+                current_instance = self._get_current_instance(
+                    app.models.Movie,
+                    media_id,
+                    Sources.TMDB.value,
+                    MediaTypes.MOVIE.value,
+                    user,
+                )
+                self._delete_media_instance(current_instance, "movie")
+            return
+
+        movie_metadata = app.providers.tmdb.movie(media_id)
+
+        # Qualification is re-confirmed here and every write for the movie and
+        # its watch history shares the gate transaction.
+        with self._write_gate(user, [identity], "movie") as allowed:
+            if not allowed:
+                return
+
+            movie_item, _ = app.models.Item.objects.get_or_create(
+                media_id=media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+                defaults={
+                    "title": movie_metadata["title"],
+                    "image": movie_metadata["image"],
+                },
+            )
+
             current_instance = self._get_current_instance(
                 app.models.Movie,
                 media_id,
@@ -71,66 +109,47 @@ class MovieWebhookMixin:
                 MediaTypes.MOVIE.value,
                 user,
             )
-            self._delete_media_instance(current_instance, "movie")
-            return
+            movie_played = self._is_played(payload)
 
-        movie_metadata = app.providers.tmdb.movie(media_id)
-        movie_item, _ = app.models.Item.objects.get_or_create(
-            media_id=media_id,
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.MOVIE.value,
-            defaults={
-                "title": movie_metadata["title"],
-                "image": movie_metadata["image"],
-            },
-        )
+            progress = 1 if movie_played else 0
+            now = timezone.now().replace(second=0, microsecond=0)
 
-        current_instance = self._get_current_instance(
-            app.models.Movie,
-            media_id,
-            Sources.TMDB.value,
-            MediaTypes.MOVIE.value,
-            user,
-        )
-        movie_played = self._is_played(payload)
+            if current_instance and current_instance.status != Status.COMPLETED.value:
+                current_instance.progress = progress
 
-        progress = 1 if movie_played else 0
-        now = timezone.now().replace(second=0, microsecond=0)
+                if movie_played:
+                    current_instance.end_date = now
+                    current_instance.status = Status.COMPLETED.value
 
-        if current_instance and current_instance.status != Status.COMPLETED.value:
-            current_instance.progress = progress
+                elif current_instance.status != Status.IN_PROGRESS.value:
+                    current_instance.start_date = now
+                    current_instance.status = Status.IN_PROGRESS.value
 
-            if movie_played:
-                current_instance.end_date = now
-                current_instance.status = Status.COMPLETED.value
-
-            elif current_instance.status != Status.IN_PROGRESS.value:
-                current_instance.start_date = now
-                current_instance.status = Status.IN_PROGRESS.value
-
-            if current_instance.tracker.changed():
-                current_instance.save()
-                logger.info(
-                    "Updated existing movie instance to status: %s",
-                    current_instance.status,
-                )
+                if current_instance.tracker.changed():
+                    current_instance.save()
+                    logger.info(
+                        "Updated existing movie instance to status: %s",
+                        current_instance.status,
+                    )
+                else:
+                    logger.debug(
+                        "No changes detected for existing movie instance: %s",
+                        current_instance.item,
+                    )
             else:
-                logger.debug(
-                    "No changes detected for existing movie instance: %s",
-                    current_instance.item,
+                app.models.Movie.objects.create(
+                    item=movie_item,
+                    user=user,
+                    progress=progress,
+                    status=Status.COMPLETED.value
+                    if movie_played
+                    else Status.IN_PROGRESS.value,
+                    start_date=now if not movie_played else None,
+                    end_date=now if movie_played else None,
                 )
-        else:
-            app.models.Movie.objects.create(
-                item=movie_item,
-                user=user,
-                progress=progress,
-                status=Status.COMPLETED.value
-                if movie_played
-                else Status.IN_PROGRESS.value,
-                start_date=now if not movie_played else None,
-                end_date=now if movie_played else None,
-            )
-            logger.info(
-                "Created new movie instance with status: %s",
-                Status.COMPLETED.value if movie_played else Status.IN_PROGRESS.value,
-            )
+                logger.info(
+                    "Created new movie instance with status: %s",
+                    Status.COMPLETED.value
+                    if movie_played
+                    else Status.IN_PROGRESS.value,
+                )

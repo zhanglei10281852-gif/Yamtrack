@@ -3,6 +3,7 @@ import logging
 from django.utils import timezone
 
 import app
+from app import barriers
 from app.models import MediaTypes, Sources, Status
 from app.providers import tvdb as tvdb_provider
 
@@ -206,12 +207,72 @@ class TVWebhookMixin:
         user,
     ):
         """Handle TV episode playback event."""
+        # A deleted show blocks every episode write for it; a deleted season
+        # only blocks its own episodes (other seasons keep tracking), and a
+        # deleted single episode blocks only that episode.
+        identities = [
+            barriers.make_identity(
+                Sources.TMDB.value,
+                media_id,
+                MediaTypes.TV.value,
+            ),
+            barriers.make_identity(
+                Sources.TMDB.value,
+                media_id,
+                MediaTypes.SEASON.value,
+                season_number=season_number,
+            ),
+            barriers.make_identity(
+                Sources.TMDB.value,
+                media_id,
+                MediaTypes.EPISODE.value,
+                season_number=season_number,
+                episode_number=episode_number,
+            ),
+        ]
+
         if self._is_unplayed(payload):
-            self._delete_tv_episode(media_id, season_number, episode_number, user)
+            with self._write_gate(user, identities, "tv episode (unplayed)") as allowed:
+                if not allowed:
+                    return
+                self._delete_tv_episode(
+                    media_id,
+                    season_number,
+                    episode_number,
+                    user,
+                )
             return
 
         tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
         season_metadata = tv_metadata[f"season/{season_number}"]
+
+        # The whole TV -> season -> episode graph (and watch history) is one
+        # gated transaction: a stale request neither resurrects the graph nor
+        # leaves a parent-only or episode-only partial graph behind.
+        with self._write_gate(user, identities, "tv episode") as allowed:
+            if not allowed:
+                return
+            self._track_tv_episode(
+                media_id,
+                season_number,
+                episode_number,
+                payload,
+                user,
+                metadata=(tv_metadata, season_metadata),
+            )
+
+    def _track_tv_episode(
+        self,
+        media_id,
+        season_number,
+        episode_number,
+        payload,
+        user,
+        *,
+        metadata,
+    ):
+        """Create or update the TV -> season -> episode graph for an event."""
+        tv_metadata, season_metadata = metadata
 
         tv_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
@@ -274,51 +335,71 @@ class TVWebhookMixin:
                 season_number,
             )
 
-        episode_item = season_instance.get_episode_item(episode_number, season_metadata)
+        episode_item = season_instance.get_episode_item(
+            episode_number,
+            season_metadata,
+        )
 
         if self._is_played(payload):
-            now = timezone.now().replace(second=0, microsecond=0)
-            latest_episode = (
-                app.models.Episode.objects.filter(
-                    item=episode_item,
-                    related_season=season_instance,
-                )
-                .order_by("-end_date")
-                .first()
+            self._record_tv_episode_play(
+                tv_metadata,
+                season_number,
+                episode_number,
+                episode_item,
+                season_instance,
+            )
+        else:
+            logger.debug(
+                "Episode not marked as played: %s S%02dE%02d",
+                tv_metadata["title"],
+                season_number,
+                episode_number,
             )
 
-            should_create = True
-            # check for duplicate episode records,
-            # sometimes webhooks are triggered multiple times #689
-            if latest_episode and latest_episode.end_date:
-                time_diff = abs((now - latest_episode.end_date).total_seconds())
-                threshold = 5
-                if time_diff < threshold:
-                    should_create = False
-                    logger.debug(
-                        "Skipping duplicate episode record "
-                        "(time difference: %d seconds): %s S%02dE%02d",
-                        time_diff,
-                        tv_metadata["title"],
-                        season_number,
-                        episode_number,
-                    )
+    def _record_tv_episode_play(
+        self,
+        tv_metadata,
+        season_number,
+        episode_number,
+        episode_item,
+        season_instance,
+    ):
+        """Create an episode record, suppressing duplicate webhook deliveries."""
+        now = timezone.now().replace(second=0, microsecond=0)
+        latest_episode = (
+            app.models.Episode.objects.filter(
+                item=episode_item,
+                related_season=season_instance,
+            )
+            .order_by("-end_date")
+            .first()
+        )
 
-            if should_create:
-                app.models.Episode.objects.create(
-                    item=episode_item,
-                    related_season=season_instance,
-                    end_date=now,
-                )
-                logger.info(
-                    "Marked episode as played: %s S%02dE%02d",
+        should_create = True
+        # check for duplicate episode records,
+        # sometimes webhooks are triggered multiple times #689
+        if latest_episode and latest_episode.end_date:
+            time_diff = abs((now - latest_episode.end_date).total_seconds())
+            threshold = 5
+            if time_diff < threshold:
+                should_create = False
+                logger.debug(
+                    "Skipping duplicate episode record "
+                    "(time difference: %d seconds): %s S%02dE%02d",
+                    time_diff,
                     tv_metadata["title"],
                     season_number,
                     episode_number,
                 )
-        else:
-            logger.debug(
-                "Episode not marked as played: %s S%02dE%02d",
+
+        if should_create:
+            app.models.Episode.objects.create(
+                item=episode_item,
+                related_season=season_instance,
+                end_date=now,
+            )
+            logger.info(
+                "Marked episode as played: %s S%02dE%02d",
                 tv_metadata["title"],
                 season_number,
                 episode_number,

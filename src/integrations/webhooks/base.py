@@ -1,5 +1,6 @@
 import logging
 
+from app import barriers
 from app.models import MediaTypes
 from app.providers import tvdb as tvdb_provider  # noqa: F401
 
@@ -17,6 +18,24 @@ class BaseWebhookProcessor(TVWebhookMixin, MovieWebhookMixin, AnimeWebhookMixin)
         "Episode": MediaTypes.TV.value,
         "Movie": MediaTypes.MOVIE.value,
     }
+
+    # Newest explicit-deletion generation visible when the event was accepted.
+    # Processors are created per request; the class default keeps directly
+    # instantiated processors permissive until an event is accepted.
+    deletion_generation = 0
+
+    def _snapshot_deletion_generation(self, user):
+        """Capture the processing qualification at event reception time."""
+        self.deletion_generation = barriers.current_generation(user)
+
+    def _write_gate(self, user, identities, media_label):
+        """Re-confirm the qualification around all writes for one media graph."""
+        return barriers.webhook_write_gate(
+            user,
+            self.deletion_generation,
+            identities,
+            media_label,
+        )
 
     def process_payload(self, payload, user):
         """Process webhook payload."""

@@ -1,0 +1,22 @@
+rubrics:
+  - id: 1
+    type: f2p
+    text: 删除前已开始但删除后才进入持久化的 Webhook 不会重新创建已删除媒体实例、观看历史或已删除的跟踪状态。
+  - id: 2
+    type: f2p
+    text: 电影路径和 TV 到 Season 到 Episode 路径在写入前校验同一因果边界，拒绝旧请求时不留下部分父子媒体图。
+  - id: 3
+    type: f2p
+    text: Plex、Jellyfin 和 Emby 共享删除边界，旧请求在外部 ID 解析或 provider 查询前后的不同交错中都不能恢复媒体。
+  - id: 4
+    type: f2p
+    text: 删除完成后真正新发生的播放或 MarkPlayed 事件仍可重新跟踪，用户手动重新添加也不受旧删除边界阻塞。
+  - id: 5
+    type: f2p
+    text: 删除事务失败或服务在删除与 Webhook 写入期间重启后恢复到可确定且可重试的状态，不产生虚假删除或部分复活。
+  - id: 6
+    type: p2p
+    text: 无删除重叠的 Plex、Jellyfin、Emby 电影、剧集和动漫 Webhook 继续按现有规则创建或更新跟踪数据。
+  - id: 7
+    type: p2p
+    text: 重复观看抑制、MarkUnplayed、无效 token、缺少外部 ID 和不支持事件的忽略行为保持现有结果。

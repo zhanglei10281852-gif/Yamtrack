@@ -821,6 +821,64 @@ class UserMessage(models.Model):
         return self.level
 
 
+class MediaDeletionBarrier(models.Model):
+    """Append-only causal barrier for explicit media deletions.
+
+    A row is inserted in the same transaction that removes a tracked media
+    graph (movie, TV show/season or anime) after an explicit user deletion.
+    The row id is a globally increasing generation. Webhook requests snapshot
+    the newest generation visible when they are authenticated and accepted,
+    then re-check under a user lock whether a newer barrier exists for the
+    resolved target identity before creating or updating Movie, TV, Season,
+    Episode or watch history rows.
+
+    Requests that started before the deletion committed lose their write
+    qualification; requests accepted after the commit snapshot the new
+    generation and may re-track normally. Manual re-adds never consult the
+    barrier.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="media_deletion_barriers",
+    )
+    source = models.CharField(
+        max_length=20,
+        choices=Sources,
+    )
+    media_id = models.CharField(max_length=36)
+    media_type = models.CharField(
+        max_length=10,
+        choices=MediaTypes,
+    )
+    season_number = models.PositiveIntegerField(null=True, blank=True)
+    episode_number = models.PositiveIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        """Meta options for the model."""
+
+        ordering = ["id"]
+        indexes = [
+            models.Index(
+                fields=[
+                    "user",
+                    "source",
+                    "media_id",
+                    "media_type",
+                    "season_number",
+                    "episode_number",
+                ],
+                name="app_mdb_identity_idx",
+            ),
+        ]
+
+    def __str__(self):
+        """Return the barrier identity."""
+        return f"{self.user}: {self.source}/{self.media_id}/{self.media_type}"
+
+
 class Media(models.Model):
     """Abstract model for all media types."""
 

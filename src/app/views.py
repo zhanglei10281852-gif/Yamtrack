@@ -16,7 +16,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from app import config, helpers, history_processor
+from app import barriers, config, helpers, history_processor
 from app import home as home_helpers
 from app import statistics as stats
 from app.forms import EpisodeForm, ManualItemForm, get_form_class
@@ -666,11 +666,16 @@ def media_save(request):
 
 @require_POST
 def media_delete(request):
-    """Delete media data from the database."""
+    """Delete media data from the database.
+
+    The deletion and the generation barrier are one atomic commit: webhook
+    requests accepted before this call lose their write qualification for the
+    deleted identity, while events accepted afterwards still re-track.
+    """
     instance_id = request.POST["instance_id"]
     media_type = request.POST["media_type"]
     media = helpers.get_owned_media_or_404(request, media_type, instance_id)
-    media.delete()
+    barriers.record_explicit_deletion(media)
     logger.info("%s deleted successfully.", media)
 
     return helpers.redirect_back(request)

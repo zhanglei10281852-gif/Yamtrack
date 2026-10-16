@@ -7,6 +7,7 @@ from django.contrib.admin.sites import AlreadyRegistered
 from app.models import (
     Episode,
     Item,
+    MediaDeletionBarrier,
     UserMessage,
 )
 
@@ -51,6 +52,23 @@ class MediaAdmin(admin.ModelAdmin):
     search_fields = ["item__title", "user__username", "notes"]
     list_display = ["__str__", "status", "score", "user"]
     list_filter = ["status"]
+
+
+@admin.register(MediaDeletionBarrier)
+class MediaDeletionBarrierAdmin(admin.ModelAdmin):
+    """Read-focused admin for media deletion barrier generations."""
+
+    search_fields = ["user__username", "media_id", "media_type", "source"]
+    list_display = [
+        "id",
+        "user",
+        "source",
+        "media_id",
+        "media_type",
+        "season_number",
+        "created_at",
+    ]
+    list_filter = ["source", "media_type"]
 
 
 # Register models with custom admin classes

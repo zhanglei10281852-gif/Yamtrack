@@ -1,0 +1,4 @@
+项目 fuzzygrim-yamtrack-a3a3a3f7-2c06-408e-ba23-4e385f623a4e
+专项验证：20 个删除 barrier 测试通过；Plex、Jellyfin、Emby 回归 55 项全部通过。
+可控失败交错：Episode 创建抛出 RuntimeError 后 TV、Season、Episode 全部回滚；媒体删除抛出 RuntimeError 后媒体保留且 barrier 为零。
+确定失败复现：请求已进入 process_payload，在 _extract_external_ids 内完成删除；返回 ID 后才读取 generation，最终日志显示 Created new movie instance，数据库确认已删除电影被重建。

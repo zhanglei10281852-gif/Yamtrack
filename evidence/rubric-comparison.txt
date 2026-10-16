@@ -1,0 +1,8 @@
+项目：fuzzygrim-yamtrack-a3a3a3f7-2c06-408e-ba23-4e385f623a4e
+Rubric ID：1｜状态：未通过｜期望行为：删除前请求不得在删除后恢复媒体。｜实际观察：请求在 ID 解析期间完成删除，随后取得新代际并创建 Movie。｜直接证据：对抗测试输出 delete during ID extraction recreated movie。｜原因：Webhook 在外部 ID 解析后才记录删除代际，解析期间完成删除的旧请求重建了已删除电影｜影响：删除前进入流程的慢请求可在删除后恢复媒体和跟踪状态｜证据位置：jellyfin.py:36-43；对抗测试日志
+Rubric ID：2｜状态：通过｜期望行为：电影与 TV 图同边界且拒绝不留残图。｜实际观察：电影写入同一门禁事务；TV、Season、Episode 同事务，Episode 异常时父级全回滚。｜直接证据：movie.py:65-155；tv.py:201-262；failed_tv_write 测试通过。
+Rubric ID：3｜状态：未通过｜期望行为：三种入口覆盖 ID 和 provider 查询交错。｜实际观察：Plex、Jellyfin、Emby 均先解析 ID 后取代际；两步间删除使旧请求取得新代际。｜直接证据：plex.py:40-47、jellyfin.py:36-43、emby.py:34-41；可控交错重建 Movie。｜原因：Webhook 在外部 ID 解析后才记录删除代际，解析期间完成删除的旧请求重建了已删除电影｜影响：三种入口在 ID 解析窗口均将删除前请求视为删除后新事件｜证据位置：plex.py:40-47；jellyfin.py:36-43；emby.py:34-41
+Rubric ID：4｜状态：通过｜期望行为：删除后新事件和手动重加可用。｜实际观察：新 processor 重建完整图，手动重加不查 barrier 且可被新事件更新。｜直接证据：new_event 与 manual_readd 测试通过。
+Rubric ID：5｜状态：通过｜期望行为：删除失败或重启后确定可重试。｜实际观察：barrier 与删除同事务；删除异常后媒体保留且 barrier 为零，已提交 barrier 持久可查。｜直接证据：barriers.py:152-180；failed_delete 测试通过。
+Rubric ID：6｜状态：通过｜期望行为：三种 Webhook 正常路径兼容。｜实际观察：Plex、Jellyfin、Emby 电影、剧集和动漫 55 项回归全过。｜直接证据：三组 webhook 测试 Ran 55 tests OK。
+Rubric ID：7｜状态：通过｜期望行为：重复、MarkUnplayed 和忽略路径兼容。｜实际观察：重复单集仅一条，MarkUnplayed、无效 token、缺 ID 和不支持事件测试通过。｜直接证据：duplicate、unplayed 和三组回归测试。
