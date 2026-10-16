@@ -38,6 +38,14 @@ def process_task_result(task):
     elif task.status == "PENDING":
         task.summary = "This task has been queued and is waiting to run."
         task.errors = None
+    elif task.status == "REVOKED":
+        # Runs stopped because their schedule was deleted; never presented as
+        # pending runs of a (possibly recreated) plan.
+        try:
+            task.summary = json.loads(task.result)
+        except (TypeError, json.JSONDecodeError):
+            task.summary = "This import was stopped because its schedule was deleted."
+        task.errors = None
 
     return task
 

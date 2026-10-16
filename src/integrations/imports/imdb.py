@@ -109,8 +109,11 @@ class IMDBImporter:
         # Add consolidated warnings for duplicates
         self._add_duplicate_warnings(media_id_counts, media_id_titles)
 
-        helpers.cleanup_existing_media(self.to_delete, self.user)
-        helpers.bulk_create_media(self.bulk_media, self.user)
+        helpers.commit_import_changes(
+            self.user,
+            to_delete=self.to_delete,
+            bulk_media=self.bulk_media,
+        )
 
         imported_counts = {
             media_type: len(media_list)

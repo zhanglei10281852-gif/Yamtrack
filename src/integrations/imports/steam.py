@@ -68,12 +68,12 @@ class SteamImporter:
         for game_data in owned_games:
             self._process_game(game_data)
 
-        helpers.cleanup_existing_media(self.to_delete, self.user)
-        helpers.bulk_create_media(self.bulk_media, self.user)
-        helpers.bulk_update_media(
-            self.bulk_media_updates,
-            {MediaTypes.GAME.value: ["progress", "status"]},
+        helpers.commit_import_changes(
             self.user,
+            to_delete=self.to_delete,
+            bulk_media=self.bulk_media,
+            to_update=self.bulk_media_updates,
+            update_fields={MediaTypes.GAME.value: ["progress", "status"]},
         )
 
         created_games = len(self.bulk_media[MediaTypes.GAME.value])

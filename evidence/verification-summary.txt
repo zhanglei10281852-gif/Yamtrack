@@ -1,0 +1,5 @@
+项目 fuzzygrim-yamtrack-6e963b6c-fd7e-46b9-8acb-8fa77adf4136
+专项与受影响回归：代际、删除与用户历史 38 项测试全部通过。
+完整导入套件：121 项中 119 项通过；2 项在 Windows 对基线已有的无时区 datetime.astimezone 调用报 OSError 22，该行与登记版本一致。
+可控并发交错：写任务持有 generation 行锁时，删除 nowait 返回 PlanWriteInProgressError，计划和 ACTIVE generation 均保持不变。
+可控失败交错：批量写入中途异常后 transaction.atomic 回滚全部媒体变化；broker 撤销连接失败后关闭 generation 仍阻止旧消息写入。

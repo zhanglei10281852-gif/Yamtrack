@@ -489,6 +489,8 @@
                   <span class="px-2 py-1 rounded text-xs font-medium text-blue-400 bg-blue-400/10">Started</span>
                 {% elif result.status == "FAILURE" %}
                   <span class="px-2 py-1 rounded text-xs font-medium text-red-400 bg-red-400/10">Failed</span>
+                {% elif result.status == "REVOKED" %}
+                  <span class="px-2 py-1 rounded text-xs font-medium text-gray-400 bg-gray-400/10">Stopped</span>
                 {% else %}
                   <span class="px-2 py-1 rounded text-xs font-medium text-yellow-400 bg-yellow-400/10">Pending</span>
                 {% endif %}

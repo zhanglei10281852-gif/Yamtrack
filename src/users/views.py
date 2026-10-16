@@ -14,6 +14,7 @@ from django_celery_beat.models import PeriodicTask
 
 from app.models import Item, MediaTypes
 from app.providers import tmdb
+from integrations.imports import generations
 from users.forms import NotificationSettingsForm, PasswordChangeForm, UserUpdateForm
 from users.models import (
     WATCH_PROVIDER_REGION_UNSET,
@@ -320,17 +321,35 @@ def about(request):
 
 @require_POST
 def delete_import_schedule(request):
-    """Delete an import schedule."""
+    """Delete an import schedule and close its plan generation.
+
+    Closing the generation invalidates every message the plan already
+    published, so queued runs terminate without writing and runs that already
+    own the write zone either finish completely or roll back as a whole.
+    """
     task_name = request.POST.get("task_name")
     try:
-        task = PeriodicTask.objects.get(
-            name=task_name,
-            kwargs__contains=f'"user_id": {request.user.id}',
-        )
-        task.delete()
-        messages.success(request, "Import schedule deleted.")
+        task = generations.get_periodic_task_for_user(task_name, request.user)
     except PeriodicTask.DoesNotExist:
         messages.error(request, "Import schedule not found.")
+        return redirect("import_data")
+
+    try:
+        generation_id = generations.close_generation(task)
+    except generations.PlanWriteInProgressError:
+        # The close transaction was rolled back; the plan and its generation
+        # stay active and keep running with their original semantics.
+        messages.error(
+            request,
+            "This import is currently writing to your library. "
+            "Please try deleting it again once the run finishes.",
+        )
+        return redirect("import_data")
+
+    # Best-effort cleanup of messages already in the queue.
+    generations.revoke_pending_runs(generation_id)
+
+    messages.success(request, "Import schedule deleted.")
     return redirect("import_data")
 
 

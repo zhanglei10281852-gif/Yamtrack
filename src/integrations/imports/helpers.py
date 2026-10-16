@@ -9,12 +9,14 @@ from cryptography.fernet import Fernet
 from django.apps import apps
 from django.conf import settings
 from django.contrib import messages
+from django.db import transaction
 from django.utils import timezone
 from django_celery_beat.models import CrontabSchedule, PeriodicTask
 from simple_history.utils import bulk_create_with_history, bulk_update_with_history
 
 import app
 from app.models import MediaTypes, Status
+from integrations.imports import generations
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +368,35 @@ def bulk_update_media(bulk_media_list, fields_by_media_type, user):
         )
 
 
+def commit_import_changes(
+    user,
+    *,
+    to_delete,
+    bulk_media,
+    to_update=None,
+    update_fields=None,
+):
+    """Own the write zone and apply every media change of an import atomically.
+
+    The generation of the running plan is locked and revalidated right before
+    the first production write, then deletes, creates and updates all happen in
+    a single transaction. A closed generation or a failing write rolls the whole
+    import back, so no half import is ever committed and the caller must not
+    refresh the calendar.
+    """
+    generation_id = generations.current_generation_id()
+    with transaction.atomic():
+        generations.acquire_write_ownership(generation_id)
+        cleanup_existing_media(to_delete, user)
+        bulk_create_media(bulk_media, user)
+        if to_update:
+            bulk_update_media(
+                to_update,
+                update_fields or EXISTING_MEDIA_UPDATE_FIELDS,
+                user,
+            )
+
+
 def create_import_schedule(
     username,
     request,
@@ -389,8 +420,8 @@ def create_import_schedule(
         messages.error(request, "Invalid import time.")
         return
 
-    task_name = f"Import from {source} for {username} at {import_time} {frequency}"
-    if PeriodicTask.objects.filter(name=task_name).exists():
+    plan_name = f"Import from {source} for {username} at {import_time} {frequency}"
+    if PeriodicTask.objects.filter(name=plan_name).exists():
         messages.error(
             request,
             "The same import task is already scheduled.",
@@ -404,23 +435,40 @@ def create_import_schedule(
         timezone=timezone.get_default_timezone(),
     )
 
-    kwargs = {
-        "username": username,
-        "user_id": request.user.id,
-        "mode": mode,
-    }
+    celery_task_name = f"Import from {source}"
 
-    if task_kwargs:
-        kwargs.update(task_kwargs)
+    # The generation and the scheduler row are created together, so a plan can
+    # never exist without a generation that accepts its messages.
+    with transaction.atomic():
+        generation = generations.open_generation(
+            user=request.user,
+            task_name=celery_task_name,
+            periodic_task_name=plan_name,
+        )
+        generation_id = str(generation.generation_id)
 
-    # Create new periodic task
-    PeriodicTask.objects.create(
-        name=task_name,
-        task=f"Import from {source}",
-        crontab=crontab,
-        kwargs=json.dumps(kwargs),
-        start_time=timezone.now(),
-    )
+        kwargs = {
+            generations.PLAN_GENERATION_KWARG: generation_id,
+            "username": username,
+            "user_id": request.user.id,
+            "mode": mode,
+        }
+
+        if task_kwargs:
+            kwargs.update(task_kwargs)
+
+        # Create new periodic task. The generation is carried both in kwargs
+        # (delivered to the worker and TaskResult) and in message headers.
+        PeriodicTask.objects.create(
+            name=plan_name,
+            task=celery_task_name,
+            crontab=crontab,
+            kwargs=json.dumps(kwargs),
+            headers=json.dumps(
+                {generations.PLAN_GENERATION_KWARG: generation_id},
+            ),
+            start_time=timezone.now(),
+        )
     messages.success(request, f"{source} import task scheduled.")
 
 

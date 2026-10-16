@@ -87,8 +87,11 @@ class GoodReadsImporter:
 
         logger.debug("processed %s", self.bulk_media)
 
-        helpers.cleanup_existing_media(self.to_delete, self.user)
-        helpers.bulk_create_media(self.bulk_media, self.user)
+        helpers.commit_import_changes(
+            self.user,
+            to_delete=self.to_delete,
+            bulk_media=self.bulk_media,
+        )
 
         logger.debug("processed %s", self.bulk_media)
 

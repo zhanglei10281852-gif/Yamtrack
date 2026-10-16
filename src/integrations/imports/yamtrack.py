@@ -79,8 +79,11 @@ class YamtrackImporter:
                 error_msg = f"Error processing entry: {row}"
                 raise MediaImportUnexpectedError(error_msg) from error
 
-        helpers.cleanup_existing_media(self.to_delete, self.user)
-        helpers.bulk_create_media(self.bulk_media, self.user)
+        helpers.commit_import_changes(
+            self.user,
+            to_delete=self.to_delete,
+            bulk_media=self.bulk_media,
+        )
 
         imported_counts = {
             media_type: len(media_list)

@@ -1,0 +1,8 @@
+项目：fuzzygrim-yamtrack-6e963b6c-fd7e-46b9-8acb-8fa77adf4136
+Rubric ID：1｜状态：通过｜期望行为：计划、消息和结果有稳定代际。｜实际观察：计划原子创建 UUID，kwargs、headers 和 TaskResult 均携带 plan_generation。｜直接证据：helpers.py:400-472；models.py:8-70；create_schedule 测试通过。
+Rubric ID：2｜状态：通过｜期望行为：删除后的旧任务无写入、成功或刷新。｜实际观察：preflight 写 REVOKED 后抛 Ignore，未调用 importer 或 reload_calendar。｜直接证据：generations.py:108-158；tasks.py:58-102；closed_generation 测试通过。
+Rubric ID：3｜状态：通过｜期望行为：删除与写入并发完整结束或回滚。｜实际观察：单事务锁定代际并批量写；持锁时删除 nowait 失败，写入异常回滚全部变更。｜直接证据：helpers.py:371-398；generations.py:121-196；write_transaction 测试通过。
+Rubric ID：4｜状态：通过｜期望行为：同名重建隔离旧代际。｜实际观察：新旧 UUID 不同；旧消息 REVOKED，新消息成功导入并刷新。｜直接证据：models.py:26-46；recreated_plan 测试通过。
+Rubric ID：5｜状态：通过｜期望行为：删除失败或重启后确定可重试。｜实际观察：关闭和计划删除同事务；关闭异常保留 ACTIVE，broker 失败后数据库门禁仍拒绝旧消息。｜直接证据：generations.py:161-236；failed_close 测试通过。
+Rubric ID：6｜状态：通过｜期望行为：未删除计划保留调度、摘要和刷新。｜实际观察：ACTIVE 代际通过门禁，返回原摘要并在提交后调用 reload_calendar。｜直接证据：tasks.py:58-102；active_generation 测试通过。
+Rubric ID：7｜状态：通过｜期望行为：一次性和各来源导入兼容。｜实际观察：无代际路径不变，各 importer 统一最终原子提交；相关 38 项测试全过。｜直接证据：tasks.py:103-237；imports 各实现；Ran 38 tests OK。
