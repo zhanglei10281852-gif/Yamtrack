@@ -1,0 +1,8 @@
+项目：fuzzygrim-yamtrack-cfbbf6b0-42d3-48e9-96e2-96691dc697e2
+Rubric ID：1｜状态：通过｜期望行为：旧快照不覆盖或删除新快照。｜实际观察：generation 2 提交后 generation 1 返回 False，新日期和新增集数保留。｜直接证据：main.py:100-153；stale_round 测试通过。
+Rubric ID：2｜状态：通过｜期望行为：四类触发使用同一规则。｜实际观察：手动、状态、导入和周期入口均经 Item.fetch_releases 进入统一预留和提交。｜直接证据：app/models.py、events/tasks.py、integrations/tasks.py 调用图；main.py:14-41。
+Rubric ID：3｜状态：通过｜期望行为：抓取失败保留旧事件并可接管。｜实际观察：失败轮未保存或清理，旧事件可见，generation 3 随后提交成功。｜直接证据：main.py:80-96；failed_round 测试通过。
+Rubric ID：4｜状态：通过｜期望行为：保存或清理异常完整回滚。｜实际观察：保存、清理和提交标记同处一个事务；清理异常后日期和标记均回滚。｜直接证据：main.py:100-153；failed_commit 测试通过。
+Rubric ID：5｜状态：通过｜期望行为：不同条目独立推进。｜实际观察：电影旧代际跳过时，图书仍写入并更新自身提交代际。｜直接证据：main.py:80-96；stale_entry 测试通过。
+Rubric ID：6｜状态：未通过｜期望行为：成功刷新删除已取消旧事件。｜实际观察：已有旧事件时提交完整空快照，返回空集合且旧事件仍存在。｜直接证据：对抗测试输出 complete empty snapshot retained canceled event。｜原因：完整空快照被当作无结果跳过，已取消的旧事件仍保留｜影响：全部待播集数取消后，页面、iCalendar 和通知仍暴露已取消事件｜证据位置：main.py:88-92；对抗测试日志
+Rubric ID：7｜状态：通过｜期望行为：读取和唯一性兼容。｜实际观察：读取方与 Event 约束未改，日历 67 项测试全过。｜直接证据：events/models.py:228-241；Ran 67 tests OK。

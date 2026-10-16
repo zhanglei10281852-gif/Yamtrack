@@ -1,11 +1,14 @@
 import logging
 
+from django.db import transaction
+
 from app.models import MediaTypes, Sources
-from events.models import Event
+from events.models import CalendarRevision, Event
 
 from .anime import process_anime_bulk
 from .comic import process_comic
 from .other import process_other
+from .revisions import reserve_generation
 from .selectors import get_items_to_process
 from .tv import process_tv
 
@@ -27,11 +30,131 @@ def fetch_releases(user=None, items_to_process=None):
         format_items(items_to_process),
     )
 
+    # Generations are reserved before any provider fetch so that a round's
+    # priority reflects its start time: an earlier round that finishes later
+    # will see a newer generation and yield instead of committing a stale
+    # snapshot.
+    generations = reserve_refresh_round(items_to_process)
     events_bulk = process_items(items_to_process)
-    items_updated = save_events(events_bulk)
-    cleanup_invalid_events(events_bulk)
+    items_updated = commit_snapshots(items_to_process, events_bulk, generations)
 
     return generate_final_message(items_to_process, items_updated)
+
+
+def reserve_refresh_round(items):
+    """Reserve a per-entry generation for every item in this refresh round."""
+    return {item.id: reserve_generation(item) for item in items}
+
+
+def group_events_by_entry(entries, events_bulk):
+    """Map every produced event back to its processed media entry.
+
+    TV entries carry their events on the season items, so season events are
+    attributed to the TV entry identified by media id and source. Every other
+    media type owns its events directly.
+    """
+    tv_entry_ids = {
+        (item.media_id, item.source): item.id
+        for item in entries
+        if item.media_type == MediaTypes.TV.value
+    }
+
+    events_by_entry = {}
+    for event in events_bulk:
+        owner = event.item
+        if owner.media_type == MediaTypes.SEASON.value:
+            entry_id = tv_entry_ids.get((owner.media_id, owner.source))
+            if entry_id is None:
+                logger.warning(
+                    "Skipping season event without a processed TV entry: %s",
+                    owner,
+                )
+                continue
+        else:
+            entry_id = owner.id
+
+        events_by_entry.setdefault(entry_id, []).append(event)
+
+    return events_by_entry
+
+
+def commit_snapshots(entries, events_bulk, generations):
+    """Commit complete per-entry snapshots, newest generation wins."""
+    events_by_entry = group_events_by_entry(entries, events_bulk)
+    items_updated = set()
+
+    for entry in entries:
+        entry_events = events_by_entry.get(entry.id)
+        if not entry_events:
+            # Nothing was produced for this entry (provider failure or no new
+            # releases): leave the previous complete calendar in place and let
+            # later refreshes take over.
+            continue
+
+        if commit_entry_snapshot(entry, entry_events, generations[entry.id]):
+            items_updated.update(event.item for event in entry_events)
+
+    return items_updated
+
+
+def commit_entry_snapshot(entry, entry_events, generation):
+    """Atomically commit one entry's snapshot when the round is still latest.
+
+    The generation check, event upserts, stale-event cleanup and committed
+    marker update run in a single transaction, so an interrupted commit can
+    never expose half-new, half-old events. Returns ``False`` (without any
+    write) when a newer round has taken over.
+    """
+    with transaction.atomic():
+        try:
+            revision = CalendarRevision.objects.select_for_update().get(
+                item_id=entry.id,
+            )
+        except CalendarRevision.DoesNotExist:
+            logger.warning(
+                "No calendar revision found for %s; skipping snapshot commit",
+                entry,
+            )
+            return False
+
+        if revision.generation != generation:
+            logger.info(
+                "Skipping stale snapshot for %s: round generation %s, latest %s",
+                entry,
+                generation,
+                revision.generation,
+            )
+            return False
+
+        if revision.committed_generation >= generation:
+            logger.info(
+                "Skipping already committed snapshot for %s (generation %s)",
+                entry,
+                generation,
+            )
+            return False
+
+        save_events(entry_events)
+        cleanup_invalid_events(entry_events)
+
+        # Conditional final claim: even on backends without row locks, a newer
+        # round committing here forces the whole snapshot to roll back.
+        claimed = CalendarRevision.objects.filter(
+            item_id=entry.id,
+            generation=generation,
+            committed_generation__lt=generation,
+        ).update(committed_generation=generation)
+
+        if not claimed:
+            logger.warning(
+                "Lost commit race for %s at generation %s; rolling back",
+                entry,
+                generation,
+            )
+            transaction.set_rollback(True)
+            return False
+
+    return True
 
 
 def process_items(items_to_process):

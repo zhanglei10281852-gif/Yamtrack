@@ -1,0 +1,5 @@
+项目 fuzzygrim-yamtrack-cfbbf6b0-42d3-48e9-96e2-96691dc697e2
+专项与回归：python src/manage.py test events.tests.calendar，Ran 67 tests，OK。
+可控失败交错：cleanup_invalid_events 抛出 RuntimeError 后 Event 日期与 committed_generation 均回滚。
+可控并发交错：较新 generation 2 先提交后，较旧 generation 1 返回 False 且不改写事件。
+确定失败复现：完整空快照提交返回空集合，数据库中的旧剧集 Event 仍存在。

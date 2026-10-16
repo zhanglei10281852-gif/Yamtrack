@@ -276,3 +276,35 @@ class Event(models.Model):
     def is_max_datetime(self):
         """Check if the event datetime is the unknown-release sentinel."""
         return self.datetime == SentinelDatetime.max_datetime()
+
+
+class CalendarRevision(models.Model):
+    """Per-media-entry generation marker for concurrent calendar refreshes.
+
+    Every refresh round reserves a new, monotonically increasing ``generation``
+    for an entry before it starts fetching provider data. A round may only
+    commit its event snapshot while it still owns the latest generation; a
+    round that was overtaken by a newer refresh yields without touching any
+    events, so stale results can never overwrite dates or delete events that
+    the newer round just published. ``committed_generation`` records which
+    complete snapshot the ``Event`` rows currently reflect.
+    """
+
+    item = models.OneToOneField(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="calendar_revision",
+    )
+    generation = models.PositiveBigIntegerField(default=0)
+    committed_generation = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Meta class for CalendarRevision model."""
+
+    def __str__(self):
+        """Return the revision state for an item."""
+        return (
+            f"{self.item} (generation {self.generation}, "
+            f"committed {self.committed_generation})"
+        )
